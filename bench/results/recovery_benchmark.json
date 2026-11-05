@@ -1,0 +1,35 @@
+[
+  {
+    "n_pending": 1000,
+    "recovered": 1000,
+    "sink_delivered": 1000,
+    "duration_s": 0.1398,
+    "throughput_eps": 7151.7,
+    "peak_mem_mb": 1.31,
+    "peak_heap_len": 1000,
+    "batch_size": 512,
+    "max_buffer_size": null
+  },
+  {
+    "n_pending": 10000,
+    "recovered": 5000,
+    "sink_delivered": 5000,
+    "duration_s": 2.2776,
+    "throughput_eps": 2195.3,
+    "peak_mem_mb": 8.2,
+    "peak_heap_len": 5000,
+    "batch_size": 512,
+    "max_buffer_size": 5000
+  },
+  {
+    "n_pending": 100000,
+    "recovered": 5000,
+    "sink_delivered": 5000,
+    "duration_s": 2.2483,
+    "throughput_eps": 2223.9,
+    "peak_mem_mb": 8.2,
+    "peak_heap_len": 5000,
+    "batch_size": 512,
+    "max_buffer_size": 5000
+  }
+]

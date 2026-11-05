@@ -1,0 +1,17 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+out.jsonl
+.venv/
+.env
+.env.*
+!.env.example
+*.rdb
+*.jsonl
+*.lock
+.env
+.env.*
+!.env.example
+*.rdb
+*.jsonl
+*.lock

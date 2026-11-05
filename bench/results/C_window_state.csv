@@ -1,0 +1,5 @@
+events,dup_ratio,kv_latency_ms,concurrency,window_s,fail_rate,ack_loss,seconds,throughput_eps,p50_ms,p95_ms,p99_ms,kv_ops_per_event,peak_kv_keys,dups_detected,retries,exactly_once
+2000,0.3,0.0,64,5,0.0,0.0,0.111,18086,4.47,5.35,6.84,2.12,130,600,0,True
+2000,0.3,0.0,64,30,0.0,0.0,0.114,17469,4.45,5.15,11.82,2.05,654,600,0,True
+2000,0.3,0.0,64,120,0.0,0.0,0.109,18329,4.48,5.01,6.17,2.04,1401,600,0,True
+2000,0.3,0.0,64,600,0.0,0.0,0.113,17722,4.57,5.35,6.76,2.03,1401,600,0,True

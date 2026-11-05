@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: exactly-once-event-deduplication-engine
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ENGINE_REDIS_URL
+        sync: false
+      - key: ENGINE_ENABLE_PARTITIONS
+        value: "1"
+      - key: ENGINE_NUM_PARTITIONS
+        value: "4"
+      - key: ENGINE_INSTANCE_ID
+        value: "render-free-single"
+      - key: ENGINE_SINK
+        value: "memory"

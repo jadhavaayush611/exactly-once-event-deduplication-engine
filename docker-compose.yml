@@ -1,0 +1,6 @@
+# Optional: real Redis 7 as the KV store (same setup as Exp 5).  docker compose up -d
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]   # AOF so pending records survive a Redis restart
