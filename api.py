@@ -767,6 +767,57 @@ async def stats():
     pm: Optional[PartitionManager] = state.get("partition_manager")
     pm_stats = pm.get_stats() if pm else None
 
+    watermark = None if e.watermark == float("-inf") else e.watermark
+
+    if pm:
+        total_received = 0
+        total_accepted = 0
+        total_duplicates = 0
+        total_delivered = 0
+        total_too_old = 0
+        total_invalid_ts = 0
+        total_too_far_future = 0
+        total_buffer_overflow = 0
+        total_flush_failures = 0
+        total_kv_retries = 0
+        total_sink_retries = 0
+        total_sink_effects = 0
+        active_wms = []
+
+        for p_state in pm.partitions.values():
+            if p_state.is_owner and p_state.engine:
+                pe_stats = p_state.engine.stats()
+                total_received += pe_stats.get("received", 0)
+                total_accepted += pe_stats.get("accepted", 0)
+                total_duplicates += pe_stats.get("duplicates", 0)
+                total_delivered += pe_stats.get("delivered", 0)
+                total_too_old += pe_stats.get("too_old", 0)
+                total_invalid_ts += pe_stats.get("invalid_timestamp", 0)
+                total_too_far_future += pe_stats.get("too_far_future", 0)
+                total_buffer_overflow += pe_stats.get("buffer_overflow", 0)
+                total_flush_failures += pe_stats.get("flush_failures", 0)
+                total_kv_retries += pe_stats.get("kv_retries", 0)
+                total_sink_retries += pe_stats.get("sink_retries", 0)
+                if hasattr(p_state.engine.sink, "effects"):
+                    total_sink_effects += len(p_state.engine.sink.effects)
+                if p_state.engine.watermark != float("-inf"):
+                    active_wms.append(p_state.engine.watermark)
+
+        d["received"] = total_received
+        d["accepted"] = total_accepted
+        d["duplicates"] = total_duplicates
+        d["delivered"] = total_delivered
+        d["too_old"] = total_too_old
+        d["invalid_timestamp"] = total_invalid_ts
+        d["too_far_future"] = total_too_far_future
+        d["buffer_overflow"] = total_buffer_overflow
+        d["flush_failures"] = total_flush_failures
+        d["kv_retries"] = total_kv_retries
+        d["sink_retries"] = total_sink_retries
+        sink_effects = total_sink_effects
+        if active_wms:
+            watermark = max(active_wms)
+
     failed_count = (
         d.get("too_old", 0)
         + d.get("invalid_timestamp", 0)
@@ -777,7 +828,7 @@ async def stats():
 
     d.update(
         instance_id=state.get("instance_id", "local"),
-        watermark=None if e.watermark == float("-inf") else e.watermark,
+        watermark=watermark,
         window=cfg.get("window", e.window),
         lateness=cfg.get("lateness", e.lateness),
         kv_keys=kv_sz,

@@ -163,6 +163,45 @@ def test_stats_metrics_and_failed_tracking(reset_engine):
     assert stats["failed"] >= 1  # at least the too_old event
 
 
+def test_partitioned_stats_aggregation():
+    """Verify stats aggregation across partitions when PartitionManager is active."""
+    import asyncio
+    from dedup_engine import PartitionManager, MemoryKV, MemorySink
+
+    async def run_partitioned():
+        kv = MemoryKV()
+        pm = PartitionManager(
+            instance_id="test-pm-stats",
+            kv=kv,
+            sink_factory=lambda p: MemorySink(),
+            num_partitions=2,
+            window=60.0,
+            lateness=2.0
+        )
+        await pm.start()
+        original_pm = state.get("partition_manager")
+        try:
+            state["partition_manager"] = pm
+            with TestClient(app) as client:
+                ev1 = {"id": str(uuid.uuid4()), "ts": 1700000000.0, "data": {}}
+                ev2 = {"id": ev1["id"], "ts": 1700000001.0, "data": {}}
+                ev3 = {"id": str(uuid.uuid4()), "ts": 1700000002.0, "data": {}}
+                
+                assert client.post("/api/events", json=ev1).json()["status"] == "accepted"
+                assert client.post("/api/events", json=ev2).json()["status"] == "duplicate"
+                assert client.post("/api/events", json=ev3).json()["status"] == "accepted"
+                
+                s = client.get("/api/stats").json()
+                assert s["received"] == 3
+                assert s["duplicates"] == 1
+                assert s["accepted"] == 2
+        finally:
+            await pm.stop()
+            state["partition_manager"] = original_pm
+
+    asyncio.run(run_partitioned())
+
+
 def test_dashboard_ui_and_static_assets(reset_engine):
     """Verify that index.html and its static assets are served properly."""
     client = reset_engine
