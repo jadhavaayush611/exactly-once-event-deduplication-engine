@@ -27,16 +27,28 @@ from dedup_engine import DedupEngine, Event, Status, KVError, MemoryKV, MemorySi
 from dedup_engine.kv import RedisKV
 
 REDIS_URL = "redis://localhost:6380/0"
+_redis_available: bool | None = None
 
 
 @pytest.fixture
 async def clean_redis():
     """Isolated, clean Redis instance for each test requiring real Redis."""
+    global _redis_available
+    if _redis_available is None:
+        try:
+            probe = redis.from_url(
+                REDIS_URL, decode_responses=True, socket_connect_timeout=0.2, retry=None
+            )
+            await probe.ping()
+            await probe.aclose()
+            _redis_available = True
+        except Exception as e:
+            _redis_available = False
+            pytest.skip(f"Live Redis instance on {REDIS_URL} unreachable: {e}")
+    elif not _redis_available:
+        pytest.skip(f"Live Redis instance on {REDIS_URL} unreachable")
+
     r = redis.from_url(REDIS_URL, decode_responses=True)
-    try:
-        await r.ping()
-    except Exception as e:
-        pytest.skip(f"Live Redis instance on {REDIS_URL} unreachable: {e}")
     await r.flushdb()
     yield r
     await r.flushdb()

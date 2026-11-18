@@ -40,9 +40,25 @@ from dedup_engine import (
 )
 
 REDIS_URL = "redis://127.0.0.1:6380/0"
+_redis_available: bool | None = None
 
 
 async def flush_test_redis():
+    global _redis_available
+    if _redis_available is None:
+        try:
+            probe = redis.from_url(
+                REDIS_URL, decode_responses=True, socket_connect_timeout=0.2, retry=None
+            )
+            await probe.ping()
+            await probe.aclose()
+            _redis_available = True
+        except Exception as e:
+            _redis_available = False
+            pytest.skip(f"Live Redis instance on {REDIS_URL} unreachable: {e}")
+    elif not _redis_available:
+        pytest.skip(f"Live Redis instance on {REDIS_URL} unreachable")
+
     r = redis.from_url(REDIS_URL, decode_responses=True)
     await r.flushdb()
     await r.aclose()

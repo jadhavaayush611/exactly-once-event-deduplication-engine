@@ -28,7 +28,6 @@ from dedup_engine import (
     KVError,
     MemoryKV,
     MemorySink,
-    FileSink,
     PartitionManager,
     RedisKV,
     SinkError,
@@ -78,21 +77,16 @@ async def lifespan(app: FastAPI):
     internal_endpoint = os.environ.get("ENGINE_INTERNAL_ENDPOINT", "")
 
     kv = RedisKV(redis_url) if redis_url else MemoryKV()
-    sink_mode = os.environ.get("ENGINE_SINK", "file").strip().lower()
-    sink_path = os.environ.get("ENGINE_SINK_PATH", "/var/data/events.jsonl")
-    sink = FileSink(sink_path, fsync=True, lock_file=True) if sink_mode == "file" else MemorySink()
+    sink = MemorySink()
     e = DedupEngine(kv, sink, window=60.0, lateness=2.0)
     start_time = time.time()
 
     pm: Optional[PartitionManager] = None
     if enable_partitions:
-        # The current free Render topology is single-instance. Use the same durable,
-        # idempotent sink for every locally owned partition. Multi-instance failover
-        # needs a shared sink and reachable owner endpoints; it is not enabled here.
         pm = PartitionManager(
             instance_id=instance_id,
             kv=kv,
-            sink_factory=lambda p_id: sink,
+            sink_factory=lambda p_id: MemorySink(),
             num_partitions=num_partitions,
             internal_endpoint=internal_endpoint,
             window=60.0,
@@ -115,8 +109,6 @@ async def lifespan(app: FastAPI):
 
     if pm:
         await pm.stop()
-    await sink.close()
-    await sink.close()
     if isinstance(kv, RedisKV):
         await kv.close()
     state.clear()
@@ -236,11 +228,27 @@ async def list_events(limit: int = 100):
 @app.post("/api/events")
 async def ingest_legacy(p: EventIn):
     """Legacy ingestion endpoint preserving backward compatibility with dashboard."""
-    e, _, _ = current()
+    pm: Optional[PartitionManager] = state.get("partition_manager")
     ev = Event(p.id, p.ts, p.data)
+    partition_id = None
     try:
-        status = await e.ingest(ev)
+        if pm is not None:
+            status, partition_id, error_msg = await asyncio.wait_for(
+                pm.ingest_event(ev),
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            p_state = pm.partitions.get(partition_id)
+            wm = p_state.engine.watermark if (p_state and p_state.is_owner and p_state.engine) else None
+        else:
+            e, _, _ = current()
+            status = await asyncio.wait_for(
+                e.ingest(ev),
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            wm = None if e.watermark == float("-inf") else e.watermark
     except KVError as x:
+        raise HTTPException(503, str(x)) from x
+    except (SinkError, asyncio.TimeoutError) as x:
         raise HTTPException(503, str(x)) from x
     rec = {
         "id": ev.id,
@@ -248,8 +256,10 @@ async def ingest_legacy(p: EventIn):
         "data": ev.data,
         "status": status.value,
         "at": time.time(),
-        "watermark": None if e.watermark == float("-inf") else e.watermark,
+        "watermark": wm,
     }
+    if partition_id is not None:
+        rec["partition_id"] = partition_id
     log.append(rec)
     return rec
 
@@ -757,6 +767,14 @@ async def stats():
     pm: Optional[PartitionManager] = state.get("partition_manager")
     pm_stats = pm.get_stats() if pm else None
 
+    failed_count = (
+        d.get("too_old", 0)
+        + d.get("invalid_timestamp", 0)
+        + d.get("too_far_future", 0)
+        + d.get("buffer_overflow", 0)
+        + d.get("flush_failures", 0)
+    )
+
     d.update(
         instance_id=state.get("instance_id", "local"),
         watermark=None if e.watermark == float("-inf") else e.watermark,
@@ -767,6 +785,7 @@ async def stats():
         buffered=pm_stats["total_buffered"] if pm_stats else len(e._heap),
         reserved=pm_stats["total_reserved"] if pm_stats else e._reserved,
         dlq_size=pm_stats["total_dlq"] if pm_stats else len(e.dlq),
+        failed=failed_count,
         distributed=pm_stats,
     )
     return d

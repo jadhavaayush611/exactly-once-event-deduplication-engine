@@ -10,7 +10,16 @@ Python 3.11+ / asyncio. The core has zero dependencies (`redis` and `matplotlib`
 python -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-python -m pytest                       # 158 tests: correctness + faults + proxy + api + window semantics + P3A + P3B + P3C + P3D + P4 + P5
+# Run full backend test suite (Python / pytest):
+python -m pytest
+
+# Run live stream producer & UUID frontend unit test suite (Node.js):
+node --test tests/test_stream_producer.test.js
+
+# Launch the FastAPI web server & live telemetry dashboard:
+uvicorn api:app --host 0.0.0.0 --port 10000
+# Dashboard available at: http://localhost:10000
+
 python demos/demo_inprocess.py         # narrated demo (dups, out-of-order, crash, recovery)
 python bench/benchmark.py              # benchmarks -> bench/results/*.csv + benchmarks.png
 python bench/benchmark_distributed.py  # multi-instance distributed partitioning benchmark
@@ -28,45 +37,39 @@ python -m dedup_engine.proxy --kv redis://localhost:6379/0 --sink file:out.jsonl
 
 VS Code: use *Run and Debug* (launch configs for demo / proxy / benchmarks) or *Terminal > Run Task* (tests, benchmarks).
 
+## Live Event Stream Simulator & Telemetry Dashboard
 
-## Deployment on Render (free demo)
+The dashboard (`/` served from `web/`) features a continuous live event stream simulator:
 
-This repository includes a `Dockerfile` and `render.yaml` for a free, single-instance Render web service.
-The service enables the partition manager locally and can connect to a Redis-compatible URL using
-`ENGINE_REDIS_URL`. If Redis is omitted, it falls back to process-local `MemoryKV`.
+* **Automatic Idempotency IDs**: Generates RFC 4122 v4 UUIDs via `crypto.randomUUID()`. Each logical event is created once with a persistent UUID key and payload.
+* **Continuous Event Producer**:
+  * Controls: Start, Pause, Resume, and Stop with clean in-flight termination.
+  * Configurable Ingestion Rate: slider from 0.5 to 20 events/second (dynamic interval scheduling).
+  * Configurable Duplicate Probability: slider from 0% to 100% (default 30%).
+  * Realistic Payloads: multi-domain archetypes across fintech payments, logistics routing, inventory reservations, IoT sensor telemetry, and security audit records.
+  * In-Flight & Backpressure: Tracks active in-flight requests, limits max concurrency, and executes retries with exponential backoff while preserving identical event IDs and payloads.
+* **Live Event Feed**:
+  * Displays Event ID (UUID), timestamp, domain/type, payload preview, and processing result.
+  * Visibly flags duplicates in real time.
+* **Strict Visual States**:
+  * **Green** (`#70e6b0` / `.accepted`): Unique events processed and claimed by the engine.
+  * **Red** (`#ff6b6b` / `.duplicate`): Duplicate deliveries blocked; zero redundant effects.
+  * **Amber** (`#ffbe53` / `.pending` / `.retrying`): In-flight requests or network retries.
+  * **Rose / Red** (`#ff4d6d` / `.failed`): Rejected events or DLQ entries.
+* **Manual Event Publisher**:
+  * Includes an `AUTO UUID` generator button for generating fresh `crypto.randomUUID()` keys, alongside manual timestamp and JSON payload configuration.
+* **Direct Backend Integration**: Events are submitted directly to the live backend ingestion endpoint (`POST /api/events` and `POST /events`). Deduplication results are evaluated strictly by the backend engine, not simulated in frontend JavaScript.
 
-**Free-tier limitations:** this is not the full multi-instance failover deployment. Render free web services
-cannot receive private-network traffic, so owner-to-owner HTTP forwarding is not available. Free Key Value
-instances are temporary and non-persistent, so their state may be lost on restart. The configured demo uses
-`MemorySink`, which is also process-local and non-durable. Do not claim crash-safe exactly-once effects for
-this hosted free demo. Use the local Docker Compose distributed setup and a durable shared sink for the
-project's stronger distributed verification scenario.
+## Render Free-Tier Deployment & Architectural Limitations
 
-### Deploy
+This repository includes a `Dockerfile` and `render.yaml` blueprint for automated deployment on Render.
 
-1. Push this repository to GitHub.
-2. In Render, choose **New > Blueprint** and select this repository.
-3. When prompted, create a free Key Value instance or provide a Redis-compatible connection URL for
-   `ENGINE_REDIS_URL`. Use the **private/internal** connection URL when the web service and Key Value
-   instance are in the same Render region and the selected plan supports it; otherwise use the URL Render
-   explicitly provides for the service's access path. Never commit credentials.
-4. Deploy the Blueprint. Wait for `/health` to return HTTP 200.
-5. Test `POST /events`, then repeat the same `event_id` and verify the duplicate response.
-
-For a local multi-instance demonstration, use Docker Compose with Redis persistence and multiple app
-containers. The Render free Blueprint intentionally provisions only one API instance.
-
-## Render free-tier deployment (single-instance demo)
-
-This repository includes a Dockerfile and Render Blueprint. The free-tier configuration runs one API instance with partition-aware local processing. It is not a distributed multi-instance failover deployment: Render free web services cannot receive private-network traffic, and free Key Value storage is non-persistent. The default demo sink is process-local. Do not claim crash-safe exactly-once effects for this hosted configuration.
-
-1. Push the repository to GitHub.
-2. In Render, select **New > Blueprint** and connect this repository.
-3. Supply `ENGINE_REDIS_URL` using the Redis-compatible URL provided by your Key Value service. Do not commit this URL.
-4. Deploy and wait for `/health` to return HTTP 200.
-5. POST an event to `/events`, then retry the same `event_id` and verify a duplicate response.
-
-For the full distributed behavior and failover tests, use the local multi-instance Docker setup with persistent Redis and a shared durable, idempotent sink.
+> [!WARNING]
+> **Free-Tier Deployment Limitations**:
+> * **Ephemeral MemorySink**: The current Render free-tier deployment runs a single web instance configured with `ENGINE_SINK=memory` (`MemorySink`) and non-persistent state.
+> * **Non-Persistent State**: Render free web services and free Key Value stores are temporary and ephemeral; state is reset upon instance restarts or spin-downs.
+> * **Logical Effect vs Network Delivery**: True network-level exactly-once delivery is physically impossible over unreliable networks. This engine guarantees **exactly-once logical effects** downstream under its supported assumptions (atomic KV write-ahead claim + idempotent sink).
+> * **Production Multi-Instance Topology**: For production distributed deployments with failover, use the multi-instance Docker Compose setup with persistent Redis AOF and durable `FileSink` or shared transactional storage.
 
 ## Architecture
 
@@ -172,3 +175,5 @@ EXPERIMENT_REPORT.md   aim / theory / procedure / observations / conclusion
 | redis integration (12) | Phase 3B atomic record & sorted-set mutations via Redis Lua, concurrent claims, score updates, pending/committed transitions, cutoff boundaries, lost ACKs, Phase 3A lifecycle compatibility |
 | recovery P3C (16) | Phase 3C dedicated pending index (`idx:dedup:pending`), bounded incremental batch recovery, buffer capacity adherence, stale/malformed cleanup, idempotent resume, live Redis integration |
 | sink reliability P3D (18) | Phase 3D sink idempotency, FileSink fsync durability, torn-tail recovery, fail-closed quarantine for internal corruption, independent multi-process deduplication (2 & 4 OS processes), crash redelivery, StdoutSink bounds |
+| stream demo & UUID (7) | Live stream integration (`POST /api/events` and `POST /events`), automatic UUIDv4 generation, duplicate detection, retry idempotency, metric updates (`failed`, `duplicates`), static dashboard asset verification |
+| stream producer unit tests (9) | Node.js unit tests for `StreamProducer`: state machine (start/pause/resume/stop), RFC4122 v4 UUID format, 100% duplicate replay ID/payload invariance, in-flight accounting, safe termination, backoff retry |
